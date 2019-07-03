@@ -26,14 +26,15 @@ double PositionController::constrainAngle(double x){
 
 
 FOLLOWER_OUTPUT PositionController::computeControlCommand(Eigen::Isometry3d current_pose, int64_t current_utime){
-  double linear_forward_x = 0;
-  double linear_forward_y = 0;
-  double angular_velocity = 0;
+  double linear_forward_x;
+  double linear_forward_y;
+  double angular_velocity;
   // Develop your controller here within the calls
 
   // EXAMPLE HEADING CONTROLLER CODE - ADD YOUR OWN POSITION + HEADING CONTROLLER HERE
   ///////////////////////////////////////////////////////////////////////
   ///////////////////////////////////////////////////////////////////////
+
 
   Eigen::Quaterniond q(current_pose.rotation());
   double current_roll, current_pitch, current_yaw;
@@ -43,14 +44,57 @@ FOLLOWER_OUTPUT PositionController::computeControlCommand(Eigen::Isometry3d curr
   double goal_roll, goal_pitch, goal_yaw;
   quat_to_euler(q_goal, goal_roll, goal_pitch, goal_yaw);
 
-  // compute the P control output:
-  double headingErrorRaw = current_yaw - goal_yaw;
-  double headingError = constrainAngle(headingErrorRaw);
-  double angular_gain_p_ = 10;
-  angular_velocity = -headingError * angular_gain_p_;
+  Eigen::Vector3d current_position(current_pose.translation());
+  Eigen::Vector3d goal_position(current_goal_.translation());
+  Eigen::Vector3d position_error = goal_position - current_position;
 
-  std::cout << "current_yaw: " << current_yaw << ", raw error: " << headingErrorRaw
-            << ", constrained error: " << headingError << ", des ang vel: " << angular_velocity << std::endl;
+  double admissible_yaw_error = 0.2;
+  double admissible_distance_error = 0.1;
+  double angular_gain_p_ = 10;
+  double linear_gain =1;
+  double to_goal_yaw = atan2(position_error.y(),position_error.x());
+  double distance = sqrt(position_error.y()*position_error.y() + position_error.x()*position_error.x());
+
+  if(distance < admissible_distance_error){
+      std::cout << "Arrived\n";
+      linear_forward_x = 0;
+      linear_forward_y = 0;
+      double headingErrorRaw = current_yaw - goal_yaw;
+      double headingError = constrainAngle(headingErrorRaw);
+      angular_velocity = -headingError * angular_gain_p_;
+  }
+  else if(abs(current_yaw - to_goal_yaw) > admissible_yaw_error){
+      std::cout << "Turning towards the goal\n";
+      linear_forward_x = 0;
+      linear_forward_y = 0;
+
+      double headingErrorRaw = current_yaw - to_goal_yaw;
+      double headingError = constrainAngle(headingErrorRaw);
+      angular_velocity = -headingError * angular_gain_p_;
+  }
+  else{
+      linear_forward_x = linear_gain*distance;
+      std::cout << linear_forward_x << " Heading towards the goal\n";
+      //if(linear_forward_x > 1.0) linear_forward_x = 1.0;
+      linear_forward_y = 0;
+      angular_velocity = 0;
+  }
+
+
+
+
+
+
+  // compute the P control output:
+  //double headingErrorRaw = current_yaw - goal_yaw;
+  //double headingError = constrainAngle(headingErrorRaw);
+  //double angular_gain_p_ = 10;
+  //angular_velocity = -headingError * angular_gain_p_;
+  //angular_velocity = 5;
+
+  std::cout << "linear_forward_x: " << linear_forward_x << " " << "goal: " << goal_position.x() << " " << goal_position.y() << std::endl;
+  //std::cout << "current_yaw: " << current_yaw << ", raw error: " << headingErrorRaw
+  //          << ", constrained error: " << headingError << ", des ang vel: " << angular_velocity << std::endl;
 
   ///////////////////////////////////////////////////////////////////////
   ///////////////////////////////////////////////////////////////////////

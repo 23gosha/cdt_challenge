@@ -7,13 +7,14 @@
  *
  */
 
-#include "grid_map_cdt/Challenge.hpp"
+#include "grid_map_cdt/Challenge.hpp" 
 #include <tf_conversions/tf_eigen.h>
 #include <grid_map_cv/grid_map_cv.hpp>
 
 #include <opencv2/imgproc/imgproc.hpp>
 #include <cv.h>
 #include <highgui.h>
+#include <limits>
 
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/image_encodings.h>
@@ -107,7 +108,7 @@ void NavigationDemo::callback(const grid_map_msgs::GridMap& message)
   // The all important position goal - get the robot there
   Position pos_goal(14.5, 4.0);
 
-  Eigen::Isometry3d pose_robot = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d pose_robot = Eigen::Isometry3d::Identity(); // ??
   if(demoMode_){ // demoMode
 
     Eigen::Vector3d robot_xyz = Eigen::Vector3d(0.0,0.0,0); //rpy
@@ -138,6 +139,7 @@ void NavigationDemo::callback(const grid_map_msgs::GridMap& message)
 
   Eigen::Isometry3d pose_chosen_carrot = Eigen::Isometry3d::Identity();
   bool sendCommand = planCarrot(message, pose_robot, pos_goal, pose_chosen_carrot);
+  std::cout << "pose_chosen_carrot: \n"<< pose_chosen_carrot.translation() << std::endl;
 
   if(sendCommand){
     // Send the carrot to the position controller
@@ -157,7 +159,7 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   tic();
 
   // Compute distance to the goal:
-  Position pos_robot( pose_robot.translation().head(2) );
+  Position pos_robot( pose_robot.translation().head(2) ); // ??
   double current_dist_to_goal = (pos_goal - pos_robot).norm();
   std::cout << "current distance to goal: " << current_dist_to_goal << std::endl;
 
@@ -185,7 +187,7 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
     // Send message to position_controller to start free gait action
     std_msgs::Int16 actionMsg;
     actionMsg.data = 1;
-    ros::Duration(1.0).sleep();
+    ros::Duration(1.0).sleep(); // ??
     actionPub_.publish(actionMsg);
 
     return true;
@@ -197,7 +199,7 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   GridMapRosConverter::fromMessage(message, inputMap);
   // Apply filter chain.
   grid_map::GridMap outputMap;
-  if (!filterChain_.update(inputMap, outputMap)) {
+  if (!filterChain_.update(inputMap, outputMap)) { // ??
     ROS_ERROR("Could not update the grid map filter chain!");
     return false;
   }
@@ -207,12 +209,106 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   ////// Put your code here ////////////////////////////////////
 
 
+  outputMap.add("carrots", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+  Position carrotPositon = Position(0.0,1.0);
+  Index carrotIndex;
+  if(outputMap.getIndex(carrotPositon, carrotIndex)){
+      //ROS_INFO("Carrot index identified");
+      outputMap.at("carrots", carrotIndex) = 1.0;
+  }
+  //pos_goal = carrotPositon;
 
 
+  float traversibility_threshold = 0.8;
+  const size_t windowSize = 9;
+  const int pathIterationsNumber = 200;
+  const double MAX_FLOAT = std::numeric_limits<float>::max();
+  const double MAX_DIST = MAX_FLOAT;
+  const grid_map::SlidingWindowIterator::EdgeHandling edgeHandling = grid_map::SlidingWindowIterator::EdgeHandling::EMPTY;
+  outputMap.add("nan_removed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+  for(grid_map::SlidingWindowIterator iterator(outputMap, "elevation", edgeHandling, windowSize); !iterator.isPastEnd(); ++iterator){
+      outputMap.at("nan_removed", *iterator) = iterator.getData().numberOfFinites() - windowSize*windowSize;
+  }
+  outputMap.add("non_traversible_removed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+  for(grid_map::SlidingWindowIterator iterator(outputMap, "traversability", edgeHandling, windowSize); !iterator.isPastEnd(); ++iterator){
+      if(iterator.getData().minCoeffOfFinites() < traversibility_threshold)
+        outputMap.at("non_traversible_removed", *iterator) = -1;
+      else
+        outputMap.at("non_traversible_removed", *iterator) = 0;
+  }
+  outputMap.add("allowed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+  for(GridMapIterator iterator(outputMap); !iterator.isPastEnd(); ++iterator){
+      const Index index(*iterator);
+      if(outputMap.at("non_traversible_removed", index) == 0 &&
+              outputMap.at("nan_removed", index) == 0)
+          outputMap.at("allowed", *iterator) = 1;
+      else
+          outputMap.at("allowed", *iterator) = 0;
+  }
+
+  outputMap.add("proximity_heat_map", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+  for(GridMapIterator iterator(outputMap); !iterator.isPastEnd(); ++iterator){
+      Index index(*iterator);
+      Position pos_cell;
+      outputMap.getPosition(index, pos_cell);
+      if(outputMap.at("allowed", *iterator))
+        outputMap.at("proximity_heat_map", index) = (pos_goal - pos_cell).norm()/10.0;
+      else
+        outputMap.at("proximity_heat_map", index) = MAX_DIST; // set to 2 for visualising
+  }
 
 
+  Position currentPosition = pos_robot;
+  Index currentPositionIndex;
+  if(outputMap.getIndex(currentPosition, currentPositionIndex)){
+      ROS_INFO("Current position index identified\n");
+  }
+
+  Index submapStartIndex = currentPositionIndex - Index(1,1);
+  Index submapBufferSize(3,3);
+
+  Index minValIndex;
+  float minVal = MAX_FLOAT;
+  for (grid_map::SubmapIterator iterator(outputMap, submapStartIndex, submapBufferSize);
+       !iterator.isPastEnd();++iterator){
+      if(outputMap.at("proximity_heat_map", *iterator) < minVal){
+          minVal = outputMap.at("proximity_heat_map", *iterator);
+          minValIndex = Index(*iterator);
+      }
+  }
+  Position chosenCarrot;
+  outputMap.getPosition(minValIndex, chosenCarrot);
+  pose_chosen_carrot.translation() = Eigen::Vector3d(chosenCarrot(0),chosenCarrot(1),0);
 
 
+  // Visualising path
+  Position currentPosition = Position(1.0,0.0);
+  Index currentPositionIndex;
+  if(outputMap.getIndex(currentPosition, currentPositionIndex)){
+      ROS_INFO("Current position index identified\n");
+  }
+  outputMap.add("path", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+  for(int i=0;i<pathIterationsNumber;++i){
+
+      Index submapStartIndex = currentPositionIndex - Index(1,1);
+      Index submapBufferSize(3,3);
+
+      Index minValIndex;
+      float minVal = MAX_FLOAT;
+      //ROS_INFO("Current position index: %d %d\n", currentPositionIndex(0), currentPositionIndex(1));
+      for (grid_map::SubmapIterator iterator(outputMap, submapStartIndex, submapBufferSize);
+           !iterator.isPastEnd();++iterator){
+          if(outputMap.at("proximity_heat_map", *iterator) < minVal){
+              minVal = outputMap.at("proximity_heat_map", *iterator);
+              minValIndex = Index(*iterator);
+          }
+          float val = outputMap.at("proximity_heat_map", *iterator);
+          //ROS_INFO("%d %d %f\n", Index(*iterator)(0), Index(*iterator)(1), val);
+      }
+      //ROS_INFO("\n\n");
+      currentPositionIndex = minValIndex;
+      outputMap.at("path", currentPositionIndex) = 2;
+  }
 
 
 
@@ -233,8 +329,10 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
 
   // REMOVE THIS WHEN YOUR ARE DEVELOPING ----------------
   // create a fake carrot - replace with a good carrot
-  std::cout << "REPLACE FAKE CARROT!\n";
-  pose_chosen_carrot.translation() = Eigen::Vector3d(1.0,0,0);
+  //std::cout << "REPLACE FAKE CARROT!\n";
+  //pose_chosen_carrot.translation() = Eigen::Vector3d(2.0,0,0);
+  std::cout << "position of carrot is:\n" << pose_chosen_carrot.translation() << std::endl;
+  //ROS_INFO("from planCarrot pos_chosen_carrot %d %d %d \n",pose_chosen_carrot.translation());
   // REMOVE THIS -----------------------------------------
 
   return true;
