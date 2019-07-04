@@ -159,7 +159,7 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   tic();
 
   // Compute distance to the goal:
-  Position pos_robot( pose_robot.translation().head(2) ); // ??
+  Position pos_robot( pose_robot.translation().head(2) );
   double current_dist_to_goal = (pos_goal - pos_robot).norm();
   std::cout << "current distance to goal: " << current_dist_to_goal << std::endl;
 
@@ -193,7 +193,6 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
     return true;
   }
 
-
   // Convert message to map.
   GridMap inputMap;
   GridMapRosConverter::fromMessage(message, inputMap);
@@ -206,42 +205,37 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   //if (verboseTimer_) std::cout << toc().count() << "ms: filter chain\n";
 
 
+
+
+
   ////// Put your code here ////////////////////////////////////
 
+  // Cut the faraway parts to save processing power
+  //bool subMapCreated;
+  //outputMap = outputMap.getSubmap(pos_robot, Length(0.75,0.75), subMapCreated);
+  //if (!subMapCreated)
+  //  ROS_ERROR("Could not create submap");
 
-  /*outputMap.add("carrots", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
-  Position carrotPositon = Position(0.0,1.0);
-  Index carrotIndex;
-  if(outputMap.getIndex(carrotPositon, carrotIndex)){
-      //ROS_INFO("Carrot index identified");
-      outputMap.at("carrots", carrotIndex) = 1.0;
-  }
-  //pos_goal = carrotPositon;*/
-
-
-  float traversibility_threshold = 0.8;
-  const size_t windowSize = 27; // how far should it keep from untraversible areas
+  float traversibility_threshold = 0.8; // will not go to places with bad traversibility
+  const size_t windowSize = 27; // how far away should it keep from untraversible areas
   const double MAX_FLOAT = std::numeric_limits<float>::max();
-  const double MAX_DIST = MAX_FLOAT;
+  const double MAX_DIST = 30; // normally MAX_FLOAT;
   const grid_map::SlidingWindowIterator::EdgeHandling edgeHandling = grid_map::SlidingWindowIterator::EdgeHandling::EMPTY;
+  // Areas close to NAN
   outputMap.add("nan_removed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
-
   std::cout << "TIME1: " << toc().count() << std::endl;
-  for(grid_map::SlidingWindowIterator iterator(outputMap, "elevation", edgeHandling, windowSize); !iterator.isPastEnd(); ++iterator){
-      //++iterator;
-      //++iterator;
-      outputMap.at("nan_removed", *iterator) = iterator.getData().numberOfFinites() - windowSize*windowSize;
-  }
+  //for(grid_map::SlidingWindowIterator iterator(outputMap, "elevation", edgeHandling, windowSize); !iterator.isPastEnd(); ++iterator){
+  //    outputMap.at("nan_removed", *iterator) = iterator.getData().numberOfFinites() - windowSize*windowSize;
+  //}
+  // Areas with low traversability
   outputMap.add("non_traversible_removed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
   for(grid_map::SlidingWindowIterator iterator(outputMap, "traversability", edgeHandling, windowSize); !iterator.isPastEnd(); ++iterator){
-      //++iterator;
-      //++iterator;
-      //++iterator;
       if(iterator.getData().minCoeffOfFinites() < traversibility_threshold)
         outputMap.at("non_traversible_removed", *iterator) = -1;
       else
         outputMap.at("non_traversible_removed", *iterator) = 0;
   }
+  // Combine the maps with excluded regions close to NAN and bad traversability
   outputMap.add("allowed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
   for(GridMapIterator iterator(outputMap); !iterator.isPastEnd(); ++iterator){
       const Index index(*iterator);
@@ -252,7 +246,7 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
           outputMap.at("allowed", *iterator) = 0;
   }
   std::cout << "TIME2: " << toc().count() << std::endl;
-
+  // Heatmap to be used for navigating
   outputMap.add("proximity_heat_map", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
   for(GridMapIterator iterator(outputMap); !iterator.isPastEnd(); ++iterator){
       Index index(*iterator);
@@ -261,24 +255,20 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
       if(outputMap.at("allowed", *iterator))
         outputMap.at("proximity_heat_map", index) = (pos_goal - pos_cell).norm();
       else
-        outputMap.at("proximity_heat_map", index) = MAX_DIST; // set to 2 for visualising
+        outputMap.at("proximity_heat_map", index) = MAX_DIST;
   }
 
-  // Carrot following mode
-  Position currentPosition = pos_robot;
+  Position currentPosition;
   Index currentPositionIndex;
-  if(outputMap.getIndex(currentPosition, currentPositionIndex)){
-      //ROS_INFO("Current position index identified\n");
-  }
-
-  // Setting buffer size
-  int submapBufferSizeInt = 43;
-  Index submapStartIndex = currentPositionIndex - Index((submapBufferSizeInt - 1)/2,(submapBufferSizeInt - 1)/2);
-  Index submapBufferSize(submapBufferSizeInt,submapBufferSizeInt);
-
-
+  int submapBufferSizeInt = 43; // How far away to look for a place to go
   Index minValIndex;
   float minVal = MAX_FLOAT;
+
+  /// CARROT FOLLOWING MODE
+  currentPosition = pos_robot;
+  outputMap.getIndex(currentPosition, currentPositionIndex);
+  Index submapStartIndex = currentPositionIndex - Index((submapBufferSizeInt - 1)/2,(submapBufferSizeInt - 1)/2);
+  Index submapBufferSize(submapBufferSizeInt,submapBufferSizeInt);
   for (grid_map::SubmapIterator iterator(outputMap, submapStartIndex, submapBufferSize);
        !iterator.isPastEnd();++iterator){
       //std::cout << outputMap.at("proximity_heat_map", *iterator) << std::endl;
@@ -288,53 +278,28 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
       }
   }
   Position chosenCarrot;
-  //std::cout << "Moving to " << minValIndex << std::endl;
+  outputMap.add("carrot", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+  outputMap.at("carrot", minValIndex) = 10;
   outputMap.getPosition(minValIndex, chosenCarrot);
-
-  /*
-  // Finding how many meters per index (turns out 0.02)
-  Index minIndexTest = Index(0,0);
-  Index maxIndexTest = Index(0,100);
-  Position minPosTest;
-  Position maxPosTest;
-  outputMap.getPosition(minIndexTest, minPosTest);
-  outputMap.getPosition(maxIndexTest, maxPosTest);
-  std::cout << "DISTANCE: " << (maxPosTest - minPosTest) << std::endl;*/
-
-
-  // For how long it goes after choosing direction
-  //float stepSize = 3;
-  //chosenCarrot = chosenCarrot + stepSize*(chosenCarrot - currentPosition);
-
   pose_chosen_carrot.translation() = Eigen::Vector3d(chosenCarrot(0),chosenCarrot(1),0);
-/*
-  // Visualising path mode
-  Position currentPosition = Position(1.0,0.0);
-  Index currentPositionIndex;
-  if(outputMap.getIndex(currentPosition, currentPositionIndex)){
-      ROS_INFO("Current position index identified\n");
-  }
+
+
+
+  /// VISUALISING PATH MODE
+  /*currentPosition = Position(1.0,0.0);
+  outputMap.getIndex(currentPosition, currentPositionIndex);
   outputMap.add("path", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
   const int pathIterationsNumber = 200;
   for(int i=0;i<pathIterationsNumber;++i){
-
-      int submapBufferSizeInt = 7;
       Index submapStartIndex = currentPositionIndex - Index((submapBufferSizeInt - 1)/2,(submapBufferSizeInt - 1)/2);
       Index submapBufferSize(submapBufferSizeInt,submapBufferSizeInt);
-
-      Index minValIndex;
-      float minVal = MAX_FLOAT;
-      //ROS_INFO("Current position index: %d %d\n", currentPositionIndex(0), currentPositionIndex(1));
       for (grid_map::SubmapIterator iterator(outputMap, submapStartIndex, submapBufferSize);
            !iterator.isPastEnd();++iterator){
           if(outputMap.at("proximity_heat_map", *iterator) < minVal){
               minVal = outputMap.at("proximity_heat_map", *iterator);
               minValIndex = Index(*iterator);
           }
-          //float val = outputMap.at("proximity_heat_map", *iterator);
-          //ROS_INFO("%d %d %f\n", Index(*iterator)(0), Index(*iterator)(1), val);
       }
-      //ROS_INFO("\n\n");
       currentPositionIndex = minValIndex;
       outputMap.at("path", currentPositionIndex) = 2;
   }*/
@@ -354,8 +319,6 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   if (verboseTimer_) std::cout << toc().count() << "ms: publish output\n";
 
   //std::cout << "finish - carrot planner\n\n";
-  
-
   // REMOVE THIS WHEN YOUR ARE DEVELOPING ----------------
   // create a fake carrot - replace with a good carrot
   //std::cout << "REPLACE FAKE CARROT!\n";
