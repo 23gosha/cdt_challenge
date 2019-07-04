@@ -1,4 +1,4 @@
-/*
+﻿/*
  * NavigationDemo.cpp
  *
  *  Created on: Aug 16, 2017
@@ -220,16 +220,23 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
 
 
   float traversibility_threshold = 0.8;
-  const size_t windowSize = 39; // how far should it keep from untraversible areas
+  const size_t windowSize = 27; // how far should it keep from untraversible areas
   const double MAX_FLOAT = std::numeric_limits<float>::max();
   const double MAX_DIST = MAX_FLOAT;
   const grid_map::SlidingWindowIterator::EdgeHandling edgeHandling = grid_map::SlidingWindowIterator::EdgeHandling::EMPTY;
   outputMap.add("nan_removed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
+
+  std::cout << "TIME1: " << toc().count() << std::endl;
   for(grid_map::SlidingWindowIterator iterator(outputMap, "elevation", edgeHandling, windowSize); !iterator.isPastEnd(); ++iterator){
+      //++iterator;
+      //++iterator;
       outputMap.at("nan_removed", *iterator) = iterator.getData().numberOfFinites() - windowSize*windowSize;
   }
   outputMap.add("non_traversible_removed", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
   for(grid_map::SlidingWindowIterator iterator(outputMap, "traversability", edgeHandling, windowSize); !iterator.isPastEnd(); ++iterator){
+      //++iterator;
+      //++iterator;
+      //++iterator;
       if(iterator.getData().minCoeffOfFinites() < traversibility_threshold)
         outputMap.at("non_traversible_removed", *iterator) = -1;
       else
@@ -244,6 +251,7 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
       else
           outputMap.at("allowed", *iterator) = 0;
   }
+  std::cout << "TIME2: " << toc().count() << std::endl;
 
   outputMap.add("proximity_heat_map", Matrix::Zero(outputMap.getSize()(0), outputMap.getSize()(1)));
   for(GridMapIterator iterator(outputMap); !iterator.isPastEnd(); ++iterator){
@@ -264,7 +272,7 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   }
 
   // Setting buffer size
-  int submapBufferSizeInt = 49;
+  int submapBufferSizeInt = 43;
   Index submapStartIndex = currentPositionIndex - Index((submapBufferSizeInt - 1)/2,(submapBufferSizeInt - 1)/2);
   Index submapBufferSize(submapBufferSizeInt,submapBufferSizeInt);
 
@@ -273,14 +281,14 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   float minVal = MAX_FLOAT;
   for (grid_map::SubmapIterator iterator(outputMap, submapStartIndex, submapBufferSize);
        !iterator.isPastEnd();++iterator){
-      std::cout << outputMap.at("proximity_heat_map", *iterator) << std::endl;
+      //std::cout << outputMap.at("proximity_heat_map", *iterator) << std::endl;
       if(outputMap.at("proximity_heat_map", *iterator) < minVal){
           minVal = outputMap.at("proximity_heat_map", *iterator);
           minValIndex = Index(*iterator);
       }
   }
   Position chosenCarrot;
-  std::cout << "Moving to " << minValIndex << std::endl;
+  //std::cout << "Moving to " << minValIndex << std::endl;
   outputMap.getPosition(minValIndex, chosenCarrot);
 
   /*
@@ -294,9 +302,9 @@ bool NavigationDemo::planCarrot(const grid_map_msgs::GridMap& message,
   std::cout << "DISTANCE: " << (maxPosTest - minPosTest) << std::endl;*/
 
 
-  // Setting stepSize
-  float stepSize = 3;
-  chosenCarrot = chosenCarrot + stepSize*(chosenCarrot - currentPosition);
+  // For how long it goes after choosing direction
+  //float stepSize = 3;
+  //chosenCarrot = chosenCarrot + stepSize*(chosenCarrot - currentPosition);
 
   pose_chosen_carrot.translation() = Eigen::Vector3d(chosenCarrot(0),chosenCarrot(1),0);
 /*

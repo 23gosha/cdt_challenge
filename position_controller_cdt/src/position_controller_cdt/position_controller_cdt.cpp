@@ -61,7 +61,8 @@ FOLLOWER_OUTPUT PositionController::computeControlCommand(Eigen::Isometry3d curr
       linear_forward_y = 0;
       double headingErrorRaw = current_yaw - goal_yaw;
       double headingError = constrainAngle(headingErrorRaw);
-      angular_velocity = -headingError * angular_gain_p_;
+      // Uncomment this to turn in the right direction when arrived
+      //angular_velocity = -headingError * angular_gain_p_;
   }
   else if(abs(current_yaw - to_goal_yaw) > admissible_yaw_error){
       std::cout << "Turning towards the goal\n";
